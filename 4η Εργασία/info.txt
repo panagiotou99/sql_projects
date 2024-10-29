@@ -1,0 +1,6 @@
+Δημήτριος Τσιομπίκας 3180223
+Παναγιώτης Παναγιώτου 3180139
+Endpoint: instructionsdb.ccqfww8nrpou.us-east-1.rds.amazonaws.com
+Username: examiner
+Password: examiner
+Database: instActualDB

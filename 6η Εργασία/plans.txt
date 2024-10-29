@@ -1,0 +1,377 @@
+/* 
+--We run each of the following commands on our database 
+VACUUM ANALYZE "Listing";
+VACUUM ANALYZE "Review";
+VACUUM ANALYZE "Geolocation";
+VACUUM ANALYZE "Calendar";
+VACUUM ANALYZE "Amenity";
+VACUUM ANALYZE "Host";
+VACUUM ANALYZE "Listing-Summary";
+VACUUM ANALYZE "Location";
+VACUUM ANALYZE "Neighbourhood";
+VACUUM ANALYZE "Price";
+VACUUM ANALYZE "Review-Summary";
+VACUUM ANALYZE "Room";
+VACUUM ANALYZE "Room_Amenity_Connection";
+\
+
+--and then:
+set enable_seqscan=off;
+*/ 
+
+-- QUERY 1 --
+EXPLAIN ANALYZE
+SELECT "Host".id, COUNT(*) 
+FROM "Listing", "Host" 
+WHERE"Host".id="Listing".host_id GROUP BY "Host".id;
+
+-- BEFORE INDEX --
+
+HashAggregate  (cost=3285.70..3349.33 rows=6363 width=12) (actual time=31.408..33.483 rows=6363 loops=1)
+  Group Key: "Host".id
+  ->  Hash Join  (cost=255.26..3227.99 rows=11541 width=4) (actual time=3.484..25.969 rows=11541 loops=1)
+        Hash Cond: ("Listing".host_id = "Host".id)
+        ->  Seq Scan on "Listing"  (cost=0.00..2942.41 rows=11541 width=4) (actual time=0.010..16.226 rows=11541 loops=1)
+        ->  Hash  (cost=175.73..175.73 rows=6363 width=4) (actual time=3.454..3.454 rows=6363 loops=1)
+              Buckets: 8192  Batches: 1  Memory Usage: 288kB
+              ->  Index Only Scan using "Host_pkey" on "Host"  (cost=0.28..175.73 rows=6363 width=4) (actual time=0.018..1.650 rows=6363 loops=1)
+                    Heap Fetches: 0
+Planning time: 1.455 ms
+Execution time: 35.425 ms
+
+-- AFTER INDEX --
+
+HashAggregate  (cost=652.69..716.32 rows=6363 width=12) (actual time=21.459..23.258 rows=6363 loops=1)
+  Group Key: "Host".id
+  ->  Hash Join  (cost=255.55..594.98 rows=11541 width=4) (actual time=5.605..14.573 rows=11541 loops=1)
+        Hash Cond: ("Listing".host_id = "Host".id)
+        ->  Index Only Scan using hostidindex on "Listing"  (cost=0.29..309.40 rows=11541 width=4) (actual time=0.029..3.218 rows=11541 loops=1)
+              Heap Fetches: 0
+        ->  Hash  (cost=175.73..175.73 rows=6363 width=4) (actual time=5.558..5.558 rows=6363 loops=1)
+              Buckets: 8192  Batches: 1  Memory Usage: 288kB
+              ->  Index Only Scan using "Host_pkey" on "Host"  (cost=0.28..175.73 rows=6363 width=4) (actual time=0.016..3.784 rows=6363 loops=1)
+                    Heap Fetches: 0
+Planning time: 0.590 ms
+Execution time: 24.502 ms
+
+----------------------------------------------------------------
+/* Query 1: w/out index: 35.425 ms, w/index: 24.502 ms */
+----------------------------------------------------------------
+/* to "Host".id einai hdh primary key opote den yparxei logos na to valoume ws index.To "Listing".host_id omws den einai PK tou "Listing" kai
+vrisketai se WHERE clause (to opoio shmainei oti theloume na to psaxoume grhgora) einai arketo ws index kai ontws epitaxynei thn anazhthsh.*/
+
+
+
+
+-- QUERY 2 --
+
+EXPLAIN ANALYZE
+SELECT id, price 
+FROM "Listing", "Price" 
+WHERE "Listing".guests_included > 5 AND "Price".price > 40;
+
+-- BEFORE INDEX --
+
+Nested Loop  (cost=0.00..22784.90 rows=1561824 width=8) (actual time=0.188..981.731 rows=1507072 loops=1)
+  ->  Seq Scan on "Price"  (cost=0.00..290.26 rows=6732 width=4) (actual time=0.007..4.736 rows=6728 loops=1)
+        Filter: (price > '40'::numeric)
+        Rows Removed by Filter: 4813
+  ->  Materialize  (cost=0.00..2972.42 rows=232 width=4) (actual time=0.000..0.050 rows=224 loops=6728)
+        ->  Seq Scan on "Listing"  (cost=0.00..2971.26 rows=232 width=4) (actual time=0.176..17.349 rows=224 loops=1)
+              Filter: (guests_included > 5)
+              Rows Removed by Filter: 11317
+Planning time: 0.212 ms
+Execution time: 1259.005 ms
+
+-- AFTER INDEX --
+
+Nested Loop  (cost=0.29..22692.74 rows=1561824 width=8) (actual time=0.291..954.666 rows=1507072 loops=1)
+  ->  Index Only Scan using priceindex on "Price"  (cost=0.29..198.09 rows=6732 width=4) (actual time=0.052..2.967 rows=6728 loops=1)
+        Index Cond: (price > '40'::numeric)
+        Heap Fetches: 0
+  ->  Materialize  (cost=0.00..2972.42 rows=232 width=4) (actual time=0.000..0.049 rows=224 loops=6728)
+        ->  Seq Scan on "Listing"  (cost=0.00..2971.26 rows=232 width=4) (actual time=0.234..17.898 rows=224 loops=1)
+              Filter: (guests_included > 5)
+              Rows Removed by Filter: 11317
+Planning time: 0.288 ms
+Execution time: 1237.416 ms
+
+----------------------------------------------------------------
+/* Query 2: w/out index: 1259.005 ms, w/index: 1237.416 ms */ 
+----------------------------------------------------------------
+
+/* Parathrhsame oti to price voithaei ontws sthn epitaxynsh ths anazhthshs an to prosthesoume ws index, parolo
+pou exei duplicates. Opote parameiname se ayto. */
+
+
+
+-- QUERY 3 --
+
+EXPLAIN ANALYZE
+SELECT h.id as Host_Id,h.url as Host_URL,h.name as Host_Name,li.id as Listing_Id, pr.price as Listing_Price
+FROM "Host" h 
+LEFT OUTER JOIN "Listing" li 
+ON li.host_id = h.id
+LEFT OUTER JOIN "Price" pr
+ON li.id = pr.listing_id
+WHERE h.neighbourhood = 'Attiki' AND price IS NOT NULL
+GROUP BY h.id,h.name,pr.price,li.id
+ORDER BY pr.price ASC;
+
+
+-- BEFORE INDEX --
+
+Group  (cost=3860.44..3863.61 rows=317 width=63) (actual time=33.629..33.839 rows=284 loops=1)
+  Group Key: pr.price, h.id, li.id
+  ->  Sort  (cost=3860.44..3861.23 rows=317 width=63) (actual time=33.627..33.695 rows=284 loops=1)
+        Sort Key: pr.price, h.id, li.id
+        Sort Method: quicksort  Memory: 64kB
+        ->  Hash Join  (cost=3539.41..3847.27 rows=317 width=63) (actual time=27.010..33.372 rows=284 loops=1)
+              Hash Cond: (pr.listing_id = li.id)
+              ->  Seq Scan on "Price" pr  (cost=0.00..261.41 rows=11541 width=8) (actual time=0.007..3.636 rows=11541 loops=1)
+                    Filter: (price IS NOT NULL)
+              ->  Hash  (cost=3535.45..3535.45 rows=317 width=59) (actual time=26.986..26.986 rows=284 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 34kB
+                    ->  Hash Join  (cost=562.73..3535.45 rows=317 width=59) (actual time=3.341..26.815 rows=284 loops=1)
+                          Hash Cond: (li.host_id = h.id)
+                          ->  Seq Scan on "Listing" li  (cost=0.00..2942.41 rows=11541 width=8) (actual time=0.002..20.661 rows=11541 loops=1)
+                          ->  Hash  (cost=560.54..560.54 rows=175 width=55) (actual time=3.310..3.310 rows=175 loops=1)
+                                Buckets: 1024  Batches: 1  Memory Usage: 24kB
+                                ->  Seq Scan on "Host" h  (cost=0.00..560.54 rows=175 width=55) (actual time=0.004..3.216 rows=175 loops=1)
+                                      Filter: ((neighbourhood)::text = 'Attiki'::text)
+                                      Rows Removed by Filter: 6188
+Planning time: 0.457 ms
+Execution time: 33.953 ms
+
+
+-- AFTER INDEX --
+
+Group  (cost=2222.35..2225.52 rows=317 width=63) (actual time=11.235..11.446 rows=284 loops=1)
+  Group Key: pr.price, h.id, li.id
+  ->  Sort  (cost=2222.35..2223.14 rows=317 width=63) (actual time=11.233..11.290 rows=284 loops=1)
+        Sort Key: pr.price, h.id, li.id
+        Sort Method: quicksort  Memory: 64kB        
+	        ->  Hash Join  (cost=1901.32..2209.18 rows=317 width=63) (actual time=4.655..10.975 rows=284 loops=1)
+              Hash Cond: (pr.listing_id = li.id)
+              ->  Seq Scan on "Price" pr  (cost=0.00..261.41 rows=11541 width=8) (actual time=0.009..3.609 rows=11541 loops=1)
+                    Filter: (price IS NOT NULL)
+              ->  Hash  (cost=1897.36..1897.36 rows=317 width=59) (actual time=4.633..4.633 rows=284 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 34kB
+                    ->  Nested Loop  (cost=0.29..1897.36 rows=317 width=59) (actual time=0.018..4.468 rows=284 loops=1)
+                          ->  Seq Scan on "Host" h  (cost=0.00..560.54 rows=175 width=55) (actual time=0.004..3.266 rows=175 loops=1)
+                                Filter: ((neighbourhood)::text = 'Attiki'::text)
+                                Rows Removed by Filter: 6188
+                          ->  Index Scan using hostidindex on "Listing" li  (cost=0.29..7.62 rows=2 width=8) (actual time=0.004..0.006 rows=2 loops=175)
+                                Index Cond: (host_id = h.id)
+Planning time: 0.566 ms
+Execution time: 11.569 ms
+
+----------------------------------------------------------------
+/* Query 3: w/out index: 33.953 ms, w/index: 11.569 ms */
+----------------------------------------------------------------
+
+/*Parathrhsame pws xrhsimopoiwntas pali to host_id tou Listing ws index voithise para poly sthn epitaxynsh ths anazhthshs.
+Epishs dokimasame to neighbourhood tou host na to valoume ws index alla to apotelesma htan mono diafora 2-3 ms enw me to
+host_id h diafora einai 20-22 ms*/ 
+
+
+
+
+
+-- QUERY 4 --
+
+EXPLAIN ANALYZE
+SELECT r.listing_id,r.price,l.neighbourhood,l.zipcode
+FROM "Room" r
+LEFT OUTER JOIN "Location" l
+ON r.listing_id = l.listing_id
+WHERE r.accommodates = 2
+GROUP BY r.listing_id,l.neighbourhood,l.zipcode;
+
+
+-- BEFORE INDEX --
+
+HashAggregate  (cost=1239.34..1268.02 rows=2868 width=26) (actual time=14.040..14.886 rows=2868 loops=1)
+  Group Key: r.listing_id, l.neighbourhood, l.zipcode
+  ->  Hash Right Join  (cost=831.11..1217.83 rows=2868 width=26) (actual time=4.918..12.476 rows=2868 loops=1)
+        Hash Cond: (l.listing_id = r.listing_id)
+        ->  Seq Scan on "Location" l  (cost=0.00..356.41 rows=11541 width=19) (actual time=0.005..2.763 rows=11541 loops=1)
+        ->  Hash  (cost=795.26..795.26 rows=2868 width=11) (actual time=4.897..4.897 rows=2868 loops=1)
+              Buckets: 4096  Batches: 1  Memory Usage: 153kB
+              ->  Seq Scan on "Room" r  (cost=0.00..795.26 rows=2868 width=11) (actual time=0.008..3.826 rows=2868 loops=1)
+                    Filter: (accommodates = 2)
+                    Rows Removed by Filter: 8673
+Planning time: 1.219 ms
+Execution time: 15.488 ms
+
+
+-- AFTER INDEX --
+
+HashAggregate  (cost=1189.44..1218.12 rows=2868 width=26) (actual time=13.204..14.078 rows=2868 loops=1)
+  Group Key: r.listing_id, l.neighbourhood, l.zipcode
+  ->  Hash Right Join  (cost=781.21..1167.93 rows=2868 width=26) (actual time=3.954..11.623 rows=2868 loops=1)
+        Hash Cond: (l.listing_id = r.listing_id)
+        ->  Seq Scan on "Location" l  (cost=0.00..356.41 rows=11541 width=19) (actual time=0.005..2.763 rows=11541 loops=1)
+        ->  Hash  (cost=745.36..745.36 rows=2868 width=11) (actual time=3.932..3.932 rows=2868 loops=1)
+              Buckets: 4096  Batches: 1  Memory Usage: 153kB
+              ->  Bitmap Heap Scan on "Room" r  (cost=58.51..745.36 rows=2868 width=11) (actual time=0.445..2.910 rows=2868 loops=1)
+                    Recheck Cond: (accommodates = 2)
+                    Heap Blocks: exact=647
+                    ->  Bitmap Index Scan on roomaccomindex  (cost=0.00..57.79 rows=2868 width=0) (actual time=0.358..0.359 rows=2868 loops=1)
+                          Index Cond: (accommodates = 2)
+Planning time: 0.337 ms
+Execution time: 14.683 ms
+
+----------------------------------------------------------------
+/* Query 4: w/out index: 15.488 ms, w/index: 14.683 ms */
+----------------------------------------------------------------
+
+/* Parathrhsame oti to accommodates tou room einai to katallhlo index edw (kathws vrisketai kai sto where).
+Dokimasame kai to listing_id san pithano index alla den eixe diafora apo to apotelesma xwris index sto execution time. */
+
+
+-- QUERY 5 --
+
+EXPLAIN ANALYZE
+SELECT pr.listing_id,l.neighbourhood,pr.price
+FROM "Price" pr
+INNER JOIN "Location" l
+ON pr.listing_id = l.listing_id
+GROUP BY pr.listing_id,pr.price,l.neighbourhood
+HAVING pr.price >= 50;
+
+
+-- BEFORE INDEX --
+
+HashAggregate  (cost=856.84..912.47 rows=5563 width=17) (actual time=17.299..19.120 rows=5562 loops=1)
+  Group Key: pr.listing_id, pr.price, l.neighbourhood
+  ->  Hash Join  (cost=359.80..815.12 rows=5563 width=17) (actual time=5.149..13.943 rows=5562 loops=1)
+        Hash Cond: (l.listing_id = pr.listing_id)
+        ->  Seq Scan on "Location" l  (cost=0.00..356.41 rows=11541 width=13) (actual time=0.006..2.746 rows=11541 loops=1)
+        ->  Hash  (cost=290.26..290.26 rows=5563 width=8) (actual time=5.121..5.121 rows=5562 loops=1)
+              Buckets: 8192  Batches: 1  Memory Usage: 287kB
+              ->  Seq Scan on "Price" pr  (cost=0.00..290.26 rows=5563 width=8) (actual time=0.005..3.388 rows=5562 loops=1)
+                    Filter: (price >= '50'::numeric)
+                    Rows Removed by Filter: 5979
+Planning time: 0.245 ms
+Execution time: 20.255 ms
+
+-- AFTER INDEX --
+
+HashAggregate  (cost=856.84..912.47 rows=5563 width=17) (actual time=16.890..18.537 rows=5562 loops=1)
+  Group Key: pr.listing_id, pr.price, l.neighbourhood
+  ->  Hash Join  (cost=359.80..815.12 rows=5563 width=17) (actual time=5.332..13.947 rows=5562 loops=1)
+        Hash Cond: (l.listing_id = pr.listing_id)
+        ->  Seq Scan on "Location" l  (cost=0.00..356.41 rows=11541 width=13) (actual time=0.011..2.895 rows=11541 loops=1)
+        ->  Hash  (cost=290.26..290.26 rows=5563 width=8) (actual time=5.274..5.274 rows=5562 loops=1)
+              Buckets: 8192  Batches: 1  Memory Usage: 287kB
+              ->  Seq Scan on "Price" pr  (cost=0.00..290.26 rows=5563 width=8) (actual time=0.007..3.497 rows=5562 loops=1)
+                    Filter: (price >= '50'::numeric)
+                    Rows Removed by Filter: 5979
+Planning time: 0.552 ms
+Execution time: 19.842 ms
+
+
+----------------------------------------------------------------
+/* Query 5: w/out index: 20.255 ms, w/index: 19.842 ms */
+----------------------------------------------------------------
+
+/* Edw parathrhsame oti to price tou Price htan to katallhlo index kathws epitaxynei ligo thn anahzhthsh mas.
+Dokimasame kai to neighbourhood mono tou kai se syndyasmo me to price alla epivradyne kyriws thn anazhthsh.Sto
+sygkekrimeno query o deikths den voithaei poly ws pros thn epitaxynsh ths anazhthshs mas. */
+
+-- QUERY 6 --
+
+EXPLAIN ANALYZE 
+SELECT r.listing_id,pr.price,pr.maximum_nights
+FROM "Room" r
+INNER JOIN "Price" pr
+ON r.listing_id = pr.listing_id
+GROUP BY r.listing_id,pr.price,pr.maximum_nights
+HAVING pr.maximum_nights > 30;
+
+-- BEFORE INDEX -- 
+
+HashAggregate  (cost=836.32..927.56 rows=9124 width=12) (actual time=20.506..23.308 rows=9121 loops=1)
+  Group Key: r.listing_id, pr.price, pr.maximum_nights
+  ->  Hash Join  (cost=453.66..767.89 rows=9124 width=12) (actual time=6.814..16.021 rows=9121 loops=1)
+        Hash Cond: (pr.listing_id = r.listing_id)
+        ->  Seq Scan on "Price" pr  (cost=0.00..290.26 rows=9124 width=12) (actual time=0.010..4.113 rows=9121 loops=1)
+              Filter: (maximum_nights > 30)
+              Rows Removed by Filter: 2420
+        ->  Hash  (cost=309.40..309.40 rows=11541 width=4) (actual time=6.730..6.730 rows=11541 loops=1)
+              Buckets: 16384  Batches: 1  Memory Usage: 534kB
+              ->  Index Only Scan using "Room_pkey" on "Room" r  (cost=0.29..309.40 rows=11541 width=4) (actual time=0.030..3.072 rows=11541 loops=1)
+                    Heap Fetches: 0
+Planning time: 0.310 ms
+Execution time: 25.332 ms
+
+-- AFTER INDEX --
+
+HashAggregate  (cost=836.32..927.56 rows=9124 width=12) (actual time=19.904..22.676 rows=9121 loops=1)
+  Group Key: r.listing_id, pr.price, pr.maximum_nights
+  ->  Hash Join  (cost=453.66..767.89 rows=9124 width=12) (actual time=6.742..15.635 rows=9121 loops=1)
+        Hash Cond: (pr.listing_id = r.listing_id)
+        ->  Seq Scan on "Price" pr  (cost=0.00..290.26 rows=9124 width=12) (actual time=0.008..4.089 rows=9121 loops=1)
+              Filter: (maximum_nights > 30)
+              Rows Removed by Filter: 2420
+        ->  Hash  (cost=309.40..309.40 rows=11541 width=4) (actual time=6.662..6.662 rows=11541 loops=1)
+              Buckets: 16384  Batches: 1  Memory Usage: 534kB
+              ->  Index Only Scan using "Room_pkey" on "Room" r  (cost=0.29..309.40 rows=11541 width=4) (actual time=0.017..3.179 rows=11541 loops=1)
+                    Heap Fetches: 0
+Planning time: 0.386 ms
+Execution time: 24.642 ms
+
+
+----------------------------------------------------------------
+/* Query 6: w/out index: 25.332 ms, w/index: 24.642 ms */
+----------------------------------------------------------------
+/* Parathrhsame oti to maximum_nights mias kai einai sto HAVING clause tha einai to kalytero index. 
+Dokimasthkan price kai syndyasmos price,maximum_nights alla den eixan kalytero apotelesma.
+Edw to index pali den allazei syntaraktika thn taxythta anazhthshs.*/
+
+-- QUERY 7 --
+
+EXPLAIN ANALYZE
+SELECT l.listing_id,geo.properties_neighbourhood
+FROM "Location" l
+INNER JOIN "Geolocation" geo
+ON l.neighbourhood_cleansed = geo.properties_neighbourhood
+WHERE geo.geometry_coordinates_0_0_11_0 BETWEEN '23.760000' AND '23.788416' 
+AND geo.geometry_coordinates_0_0_11_1 BETWEEN '37.956254' AND '38.000000';
+
+
+-- BEFORE INDEX --
+
+Hash Join  (cost=8.93..398.48 rows=513 width=25) (actual time=0.098..7.014 rows=598 loops=1)
+  Hash Cond: ((l.neighbourhood_cleansed)::text = (geo.properties_neighbourhood)::text)
+  ->  Seq Scan on "Location" l  (cost=0.00..356.41 rows=11541 width=33) (actual time=0.006..2.691 rows=11541 loops=1)
+  ->  Hash  (cost=8.90..8.90 rows=2 width=21) (actual time=0.062..0.063 rows=3 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 9kB
+        ->  Seq Scan on "Geolocation" geo  (cost=0.00..8.90 rows=2 width=21) (actual time=0.011..0.053 rows=3 loops=1)
+              Filter: (((geometry_coordinates_0_0_11_0)::text >= '23.760000'::text) AND ((geometry_coordinates_0_0_11_0)::text <= '23.788416'::text) AND ((geometry_coordinates_0_0_11_1)::text >= '37.956254'::text) AND ((geometry_coordinates_0_0_11_1)::text <= '38.000000'::text))
+              Rows Removed by Filter: 42
+Planning time: 2.355 ms
+Execution time: 7.169 ms
+
+-- AFTER INDEX --
+
+Hash Join  (cost=8.93..398.48 rows=513 width=25) (actual time=0.075..7.104 rows=598 loops=1)
+  Hash Cond: ((l.neighbourhood_cleansed)::text = (geo.properties_neighbourhood)::text)
+  ->  Seq Scan on "Location" l  (cost=0.00..356.41 rows=11541 width=33) (actual time=0.006..2.751 rows=11541 loops=1)
+  ->  Hash  (cost=8.90..8.90 rows=2 width=21) (actual time=0.052..0.052 rows=3 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 9kB
+        ->  Seq Scan on "Geolocation" geo  (cost=0.00..8.90 rows=2 width=21) (actual time=0.010..0.047 rows=3 loops=1)
+              Filter: (((geometry_coordinates_0_0_11_0)::text >= '23.760000'::text) AND ((geometry_coordinates_0_0_11_0)::text <= '23.788416'::text) AND ((geometry_coordinates_0_0_11_1)::text >= '37.956254'::text) AND ((geometry_coordinates_0_0_11_1)::text <= '38.000000'::text))
+              Rows Removed by Filter: 42
+Planning time: 0.269 ms
+Execution time: 7.251 ms
+
+----------------------------------------------------------------
+/* Query 7: w/out index: 7.169 ms, w/index 7.251 ms */
+----------------------------------------------------------------
+
+/* Parathrhsame oti se ayto to query to index den voitha katholou sthn epitaxynsh ths anazhthshs.
+Antitheta , h paramenei sto idio xroniko diasthma h anevainei se megalytero (px 10 ms).
+Dokimasthkan ta geometry_coordinates_0_0_11_0 kai geometry_coordinates_0_0_11_1 syndyasmena
+kai to properties_neighbourhood , ola tou Geolocation , xwris na feroun kapoio kalytero apotelesma xronou ekteleshs.*/
