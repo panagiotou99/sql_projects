@@ -1,0 +1,4 @@
+Endpoint: db-movies.ccqfww8nrpou.us-east-1.rds.amazonaws.com
+Username: examiner
+Password: examiner
+Database: moviesDB
